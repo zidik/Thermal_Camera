@@ -11,7 +11,7 @@
 
 static inline bool readMLX(uint8_t address, uint16_t *temperature, uint8_t *pec);
 
-static inline void USB_get_recieved_characters();
+static inline void recieve_incoming_characters();
 static inline void parse_command(uint8_t *command);
 static inline bool parse_info(uint8_t *command);
 static inline bool parse_abs_pos(uint8_t *command);
@@ -20,6 +20,8 @@ static inline bool parse_servo_pos(uint8_t *command, uint8_t servoNr);
 static inline bool parse_csv_u16(uint8_t *char_array, uint8_t start, uint8_t length, uint8_t count, uint16_t *values);
 static inline bool parse_temp(uint8_t *command);
 
+static inline void send_datapoint( uint8_t posX, uint8_t posY, uint16_t temp);
+
 static inline uint16_t getServoValue(uint8_t servoNr);
 static inline void setServoValue(uint8_t servoNr, uint16_t servoValue);
 
@@ -27,9 +29,10 @@ static inline void scanStep();
 static inline void scanInit();
 static inline void scanMoveServos();
 
-uint8_t USB_RX_data[USB_RX_CMD_LENGTH];
-uint8_t USB_RX_data_count = 0;
-bool USB_RX_CMD_started;
+
+uint8_t USB_RX_data[USB_RX_CMD_LENGTH];	// array of received bytes
+uint8_t USB_RX_data_count = 0;	// number of received bytes
+bool USB_RX_CMD_started;	// true if command start sign has been received but end sign not yet
 
 
 
@@ -39,18 +42,18 @@ extern USB_ClassInfo_CDC_Device_t VirtualSerial_CDC_Interface;
  */
 static FILE USBSerialStream;
 
-int8_t scanServoDir = 1;
-uint16_t scancounter = 0;
-bool scanning = false;
-bool scanInitialisation = false;
-int8_t scanPosX = 0;
+int8_t scanServoDir = 1;	// scanning servo direction - changes between 1 and -1
+// TODO: replace counter with timer
+uint16_t scanCounter = 0;	//counter for timing
+bool scanning = false;	//Current scanning state
+bool scanInitialisation = false;	//True if scanning is about to begin (Servos are moving to starting position)
+//Current position
+uint8_t scanPosX = 0;				
 uint8_t scanPosY = 0;
-uint8_t scanStepSize = 3;
-uint8_t scanResolution = 64;
 
-/** Main program entry point. This routine contains the overall program flow, including initial
- *  setup of all components and the main program loop.
- */
+uint8_t scanStepSize = 3;	// Step size
+uint8_t scanResolution = 64;	// scanning resolution
+
 int main(void)
 {
 	SetupHardware();
@@ -62,37 +65,36 @@ int main(void)
 	stdout	= &USBSerialStream;
 
 	GlobalInterruptEnable();
-	uint16_t counter = 0;
+	uint16_t heartBeatCounter = 0;
 	uint8_t counter2 = 0;
-	
-	
-	
 	
 	
 	for (;;)
 	{
-		//Scanningpart
+		//Scanning part
 		if(scanning){
-			scancounter++;
+			scanCounter++;
 			if(scanInitialisation){
-				if(scancounter == 0){
-					//wait 0xFFFF cycles - so servo would get to initial position
+				if(scanCounter == 0){
+					//wait 0xFFFF cycles - so servo would have time to move to initial position
 					scanInitialisation = false;
 				}
 			}
 			else{
-				if(scancounter == 6000){
-					scancounter = 0;
+				if(scanCounter == 6000){
+					scanCounter = 0;
 					scanStep();
 				}
 			}
 		}
 		
 		
-		counter++;
-		if(counter == 0){
+		// Heartbeat LED
+		heartBeatCounter++;
+		if(heartBeatCounter == 0){
 			SETBIT(PINE,PE6);
-
+			
+			//TODO: USB Reconnection on connection loss
 			counter2++;
 			if(counter2 == 20){
 				counter2 = 0;
@@ -103,7 +105,7 @@ int main(void)
 			}
 		}
 		
-		USB_get_recieved_characters();
+		recieve_incoming_characters();
 
 		CDC_Device_USBTask(&VirtualSerial_CDC_Interface);
 		USB_USBTask();
@@ -113,7 +115,7 @@ int main(void)
 static inline void scanInit(){
 	scanning = true;
 	scanInitialisation = true;
-	scancounter = 0;
+	scanCounter = 0;
 	scanServoDir = 1;
 	scanPosX = 0;
 	scanPosY = 0;
@@ -126,18 +128,11 @@ static inline void scanStep(){
 	
 	//Take a reading
 	if(readMLX(MLX_OBJ_TEMP_ADDRESS, &temperature, &pec)){
-		char output_string[16];
-		int cx = snprintf(output_string, sizeof(output_string),
-		"%u:%u:%u",
-		scanPosX, scanPosY, temperature);
-		if(cx == -1)
-			USB_send_warning("snprintf error");
-		if(cx >= sizeof(output_string))
-			USB_send_warning("snprintf error - buffer is not large enough");
-		USB_send_cmd("Scan",output_string);
+		send_datapoint(scanPosX, scanPosY, temperature);
 	}
 	else{
-		//ERROR - retry?
+		//ERROR
+		//TODO: - retry?
 		USB_send_cmd("Scan","0");
 	}
 	
@@ -181,9 +176,21 @@ static inline void scanMoveServos(){
 	OCR1A = SERVO_MIN + padding + scanPosX*scanStepSize;
 }
 
+static inline void send_datapoint( uint8_t posX, uint8_t posY, uint16_t temp )
+{
+	char output_string[16];
+	int cx = snprintf(	output_string, sizeof(output_string),
+						"%u:%u:%u",
+						posX, posY, temp);
+						
+	if(cx == -1)
+		USB_send_warning("snprintf error");
+	if(cx >= sizeof(output_string))
+		USB_send_warning("snprintf error - buffer is not large enough");
+	USB_send_cmd("Scan",output_string);
+}
 
-
-static inline void USB_get_recieved_characters(){
+static inline void recieve_incoming_characters(){
 	int8_t recieved_char;
 	while(EOF != (recieved_char = getchar())){
 		if(recieved_char == USB_RX_CMD_START_CHAR){
@@ -270,43 +277,6 @@ static inline bool parse_info(uint8_t *command){
 	}
 	return false;
 }
-
-
-/*
-//gets comma separated numeric values from char_array, starting from "start" and with length "length".
-//
-// char_array	- array to parse
-// start		- point, from where start parsing char_array
-// length		- char_array length
-// count		- how many values to get
-// values		- pointer to array where to store found values.
-*/
-static inline bool parse_csv_u16( uint8_t *char_array, uint8_t start, uint8_t length, uint8_t count, uint16_t *values )
-{
-	//get first value
-	values[0] = (uint16_t)atoi((char*)char_array+start);
-	//get all other values (all sepparated by comma)
-	for(uint8_t i = 1; i < count; i++){
-		bool found = false;
-		while(start < length){
-			//find next comma
-			if(char_array[start] == ','){
-				start++;
-				values[i] = (uint16_t)atoi((char*)char_array+start);
-				found = true;					
-				break;
-			}
-			start++;
-		}
-		if(!found){
-			//If not enough numbers were found
-			return false;
-		}
-	}
-	return true;
-}
-
-
 static inline bool parse_abs_pos(uint8_t *command){
 	if(command[1] == '?'){
 		//combine results into string
@@ -393,6 +363,40 @@ static inline bool parse_temp( uint8_t *command )
 	return false;
 }
 
+/*
+//gets comma separated numeric values from char_array, starting from "start" and with length "length".
+//
+// char_array	- array to parse
+// start		- point, from where start parsing char_array
+// length		- char_array length
+// count		- how many values to get
+// values		- pointer to array where to store found values.
+*/
+static inline bool parse_csv_u16( uint8_t *char_array, uint8_t start, uint8_t length, uint8_t count, uint16_t *values )
+{
+	//get first value
+	values[0] = (uint16_t)atoi((char*)char_array+start);
+	//get all other values (all sepparated by comma)
+	for(uint8_t i = 1; i < count; i++){
+		bool found = false;
+		while(start < length){
+			//find next comma
+			if(char_array[start] == ','){
+				start++;
+				values[i] = (uint16_t)atoi((char*)char_array+start);
+				found = true;					
+				break;
+			}
+			start++;
+		}
+		if(!found){
+			//If not enough numbers were found
+			return false;
+		}
+	}
+	return true;
+}
+
 static inline bool readMLX(uint8_t address, uint16_t *temperature, uint8_t *pec){
 	bool ret = false;
 	// Start a read session to device at address 0x5A, internal address 0x07 with a 1ms timeout
@@ -424,8 +428,6 @@ static inline bool readMLX(uint8_t address, uint16_t *temperature, uint8_t *pec)
 	TWI_StopTransmission();
 	return ret;
 }
-
-
 
 static inline uint16_t getServoValue(uint8_t servoNr){
 	if(servoNr == 0)
