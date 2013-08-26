@@ -16,13 +16,10 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 # Tkinter
 import tkinter as tk
 from tkinter import ttk
-from tkinter import scrolledtext
 
 # PySerial
 import serial
 import serialHelpers
-
-import time
 
 import queue
 
@@ -35,13 +32,24 @@ from cmdparser import CmdParser
 MAXIMUM_SHIFT = 8
 
 class ThermalCamApp():
-    def __init__(self, parent, incoming, outgoing):
-
+    def __init__(self, parent, serialThermal):
         self.parent = parent
+        self.serialThermal = serialThermal
+
+        self.connect_thermal_camera()
+
+        self.shift_ammount = 0
 
         self.thermal_data = ThermalData(64)
         self.thermal_data_updated = False
-        self.thermal_data.attach(self)  # attaching application as data observer (on notification update_notification() will be called)
+        self.thermal_data.attach(self)  # attaching application as data observer (on notification, update_notification() will be called)
+
+        incoming = queue.Queue()
+        outgoing = queue.Queue()
+        # Start serial monitor
+        serial_monitor = serialHelpers.SerialMonitorThread(self.serialThermal, incoming, outgoing)
+        serial_monitor.setDaemon(True)
+        serial_monitor.start()
 
         # Thread that parses incoming messages and edits thermal_data accordingly
         cmd_parser = CmdParser(incoming, self.thermal_data)
@@ -49,10 +57,6 @@ class ThermalCamApp():
         cmd_parser.start()
 
         self.thermal_camera = ThermalCamera(outgoing)
-
-        self.exited = False
-
-        self.shift_ammount = 0
 
         # Setup window size
         w = self.parent.winfo_screenwidth() - 20
@@ -142,11 +146,11 @@ class ThermalCamApp():
 
     def set_servo_A(self, event):
         value = round(self.servo_A_slider.get())
-        self.thermal_camera.set_Servo(0, value)
+        self.thermal_camera.set_servo(0, value)
 
     def set_servo_B(self, event):
         value = round(self.servo_B_slider.get())
-        self.thermal_camera.set_Servo(1, value)
+        self.thermal_camera.set_servo(1, value)
 
     def create_thermal_image(self):
         self.ax_thermal_image = self.fig.add_subplot(1, 2, 1, axisbg = 'red')
@@ -311,34 +315,17 @@ class ThermalCamApp():
         self.shift_ammount = round(self.shift_slider.get())
         self.thermal_data_updated = True;
 
+    def connect_thermal_camera(self):
+        serialHelpers.connect_device(self.serialThermal, "<INFO:dev=ThermalCamera>\r\n", "<i?>")
+
 
 
 def main():
     logging.basicConfig(format = '%(levelname)s:%(message)s', level = logging.INFO)
 
     with serial.Serial(timeout = 0, writeTimeout = 0) as serialThermal:
-        (success, foundDevs) = serialHelpers.connect_device(serialThermal, "<INFO:dev=ThermalCamera>\r\n", "<i?>")
-        if success:
-            logging.info("Found the device!")
-        else:
-            logging.warn("Could not find serial device")
-            msg = "Devices i saw:\n"
-            for (port, portStr, responce) in foundDevs:
-                msg += '  - PortNr:{}, PortString:"{}", Responce:"{}"\n'.format(port, portStr, responce)
-            logging.info(msg)
-
-        incoming = queue.Queue()
-        outgoing = queue.Queue()
-
-        # Start serial monitor
-        serial_monitor = serialHelpers.SerialMonitorThread(serialThermal, incoming, outgoing)
-        serial_monitor.setDaemon(True)
-        serial_monitor.start()
-
-
-
         root = tk.Tk()
-        ThermalCamApp(root, incoming, outgoing)
+        ThermalCamApp(root, serialThermal)
         root.mainloop()
 
 

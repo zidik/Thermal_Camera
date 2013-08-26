@@ -9,7 +9,7 @@ class ThermalCamera(object):
     def ask_info(self):
         self.outgoing.put_nowait("i?")
 
-    def set_Servo(self, servo_nr, value):
+    def set_servo(self, servo_nr, value):
         if servo_nr == 0:
             output = "A"
         else:
@@ -17,3 +17,7 @@ class ThermalCamera(object):
         output += "=" + str(value)
 
         self.outgoing.put_nowait(output)
+    def ask_temp_object(self):
+        self.outgoing.put_nowait("to?")
+    def ask_temp_ambient(self):
+        self.outgoing.put_nowait("ta?")

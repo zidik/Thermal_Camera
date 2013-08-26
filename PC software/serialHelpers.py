@@ -105,26 +105,41 @@ class SerialMonitorThread(threading.Thread):
 
         return bytesRead
 
-def connect_device(serial_connection, expectedResponce, infoString = None, autoOpen = True):
+def connect_device(serial_connection, expectedResponce, infoString = None):
+    """ Scans through open ports and sends infostring to them.
+        Then waits for response and if it does match with expectedResponce,
+        function leaves the connection open and exits 
+        
+        Returns a tuple
+        1) Boolean indicating whether device was found
+        2) list of tuples containing information about ports that were opened during search (when device is not found then this is complete list of openable ports) 
+        """
     # Save current timeouts(to be recovered in the end) Set tight timeouts.
     save_timeout = (serial_connection.timeout, serial_connection.writeTimeout)
     (serial_connection.timeout, serial_connection.writeTimeout) = (0.1, 0.1)
 
     found = []
-    success = False
-    for unused in connect_to_next_open_port(serial_connection):  # @UnusedVariable
+    for unused_variable in connect_to_next_open_port(serial_connection):  # @UnusedVariable
         if infoString is not None:
             serial_connection.write(infoString.encode())  # Send infoString
         responce = serial_connection.readline().decode()  # Collect response
         found.append((serial_connection.port, serial_connection.portstr, responce))
         if responce == expectedResponce:
+            logging.info("Found the device!")
             success = True
             break
+    else:
+        msg = "Could not find the device\nDevices i saw:\n"
+        for (port, portStr, responce) in found:
+            msg += '  - PortNr:{}, PortString:"{}", Responce:"{}"\n'.format(port, portStr, responce)
+        logging.warn(msg)
+        success = False
 
     (serial_connection.timeout, serial_connection.writeTimeout) = save_timeout
     return (success, found)
 
 def connect_to_next_open_port(serial_connection, min_port = 0, max_port = 255):
+    """Generator - every iteration opens next open port with serial_connection"""
     for port_nr in range(min_port, max_port + 1):
         if serial_connection.isOpen():
             serial_connection.close()
