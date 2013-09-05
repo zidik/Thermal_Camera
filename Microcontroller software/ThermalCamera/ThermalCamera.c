@@ -398,7 +398,7 @@ static inline bool parse_csv_u16( uint8_t *char_array, uint8_t start, uint8_t le
 }
 
 static inline bool readMLX(uint8_t address, uint16_t *temperature, uint8_t *pec){
-	bool ret = false;
+	bool success = false;
 	// Start a read session to device at address 0x5A, internal address 0x07 with a 1ms timeout
 	uint8_t temp_l, temp_h;
 	//Start writing
@@ -411,12 +411,13 @@ static inline bool readMLX(uint8_t address, uint16_t *temperature, uint8_t *pec)
 				if(TWI_ReceiveByte(&temp_l, false)){
 					if(TWI_ReceiveByte(&temp_h, false)){
 						if(TWI_ReceiveByte(pec, true)){
+							// TODO: use pec too
 							// This masks off the error bit of the high byte, then moves it left 8 bits and adds the low byte.
 							if(BITVAL(temp_h,7)){
-								USB_send_warning("Temp sensor error bit high");
+								USB_send_warning("Temp sensor errorbit high");
 							}
 							*temperature = (((uint16_t)(temp_h & 0x7F))<<8)+temp_l;
-							ret = true;
+							success = true;
 						}
 					}
 				}
@@ -424,9 +425,10 @@ static inline bool readMLX(uint8_t address, uint16_t *temperature, uint8_t *pec)
 			}
 		}
 	}
+	TWI_
 	// Must stop transmission afterwards to release the bus
 	TWI_StopTransmission();
-	return ret;
+	return success;
 }
 
 static inline uint16_t getServoValue(uint8_t servoNr){
@@ -464,6 +466,8 @@ static inline void setServoValue(uint8_t servoNr, uint16_t servoValue){
 	}
 }
 
+
+
 void SetupHardware(void)
 {
 	// Remove CLKDIV8
@@ -479,20 +483,27 @@ void SetupHardware(void)
 	// Setup debug LED
 	SETBIT(DDRE,PE6);
 	
+	servo_setup();
+	TWI_setup();
+	USB_Init();
+}
+
+void servo_setup()
+{
 	// Setup servo timer
 	TCCR1A|=(1<<COM1A1)|(1<<COM1B1)|(1<<WGM11);			//NON Inverted PWM
 	TCCR1B|=(1<<WGM13)|(1<<WGM12)|(1<<CS11)|(1<<CS10);	//PRESCALER=64 MODE 14(FAST PWM)
 	ICR1=4999;											//fPWM=50Hz (Period = 20ms Standard).
 	SETBIT(DDRB,PB5);
 	SETBIT(DDRB,PB6);
-	
+}
+
+void TWI_setup()
+{
 	// Initialize the TWI driver before first use at 100KHz
 	TWI_Init(TWI_BIT_PRESCALE_1, TWI_BITLENGTH_FROM_FREQ(1, 100000));
 	SETBIT(DDRD,PD0);
 	SETBIT(DDRD,PD1);
-
-	// Initialize USB
-	USB_Init();
 }
 
 

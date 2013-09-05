@@ -8,24 +8,34 @@ import logging
 
 # Monitor thread -
 class SerialMonitorThread(threading.Thread):
-    """ Monitors serial port for incoming messages and places them in incoming queue
-        and
-        sends messages from outgoing queue to serial port """
-    def __init__(self, serialConn, incoming, outgoing):
+    """
+    A thread for monitoring serial port for incoming messages
+    and sending outgoing messages.
+    
+    Opened serial port must be supplied (serial_port)
+    Received messages will be placed in incoming queue
+    Messages in outgoing queue will be sent to serial port
+    
+    """
+
+    def __init__(self, serial_port, incoming, outgoing):
         threading.Thread.__init__(self)
-        self.serialConn = serialConn  # Serial connection
+        self.serial_port = serial_port  # Serial connection
         self.incoming = incoming  # Incoming message Queue
         self.outgoing = outgoing  # Outgoing message Queue
 
+
         self._cmdCharList = []  # List of characters that have been received (from last message start until now). This list is emptied if message stop sign is received
+        self._running = threading.Event()  # flag for signalling the stopping of thread
+        self._running.set()
 
     def run(self):
         logging.info("SerialThread Starting")
-        outgoingMessage = None  # Message that is currently being sent over serial
+        outgoingMessage = None  # Message from queue that is currently being sent over serial
 
-        while(True):
+        while(self._running.is_set()):
             idle = True  # stays true if nothing is done in this cycle
-            if self.serialConn.isOpen():
+            if self.serial_port.isOpen():
                 # Fetch a new message from queue if needed
                 if outgoingMessage is None:
                     try:
@@ -34,10 +44,15 @@ class SerialMonitorThread(threading.Thread):
                         pass
                 # if message is fetched, send it
                 if outgoingMessage is not None:
-                    sent = self.sendCMD(outgoingMessage)
-                    if sent:
+                    try:
+                        self.sendCMD(outgoingMessage)
+                    except (serial.portNotOpenError, TypeError) as e:
+                        logging.exception(str(e))
+                        logging.warning("Could not write message to serial port. (" + str(outgoingMessage) + ")")
+                    else:
                         outgoingMessage = None
                         idle = False
+
                 # read incoming serial
                 bytesRead = self.readCMD()
                 if bytesRead > 0:
@@ -49,27 +64,22 @@ class SerialMonitorThread(threading.Thread):
 
         logging.info("SerialThread Stopped")
 
+    def join(self, timeout = None):
+        self._running.clear()  # Signal thread to stop
+        threading.Thread.join(self, timeout)  # Wait until it does
+
     def sendCMD(self, message):
         """ sends a message over serial to device
-            takes message as an argument
-            returns: True if writing to serial writing does not raise an exception
-                     False if it does. """
+            takes message as an argument """
 
-        success = False
-        try:
-            self.serialConn.write(("<" + message + ">").encode())
-            success = True
-        except Exception as e:
-            logging.exception(str(e))
-            logging.warning("Could not write message to serial port. (" + message + ")")
+        self.serial_port.write(("<" + message + ">").encode())
+        logging.debug("Sent message: " + str(message))
+        self.outgoing.task_done()  # indicate, that message has been sent #Not needed
 
-        if success:
-            logging.debug("Sent message: " + str(message))
-            # TODO: Callback!
-            self.outgoing.task_done()  # indicate, that message has been sent
-        return success
 
     def readCMD(self):
+        # TODO: Handle exceptions
+
         """reads bytes one by one from serial port and
         puts received messages to incoming Queue.
         returns: number of bytes read."""
@@ -78,18 +88,18 @@ class SerialMonitorThread(threading.Thread):
         cmdStarted = len(self._cmdCharList) > 0
 
         bytesRead = 0
-        waitingCount = self.serialConn.inWaiting()
+        waitingCount = self.serial_port.inWaiting()
         while waitingCount > 0:
             # skip everything until command start sign if command has not started
             while not cmdStarted and waitingCount > 0:
-                if self.serialConn.read().decode() == '<':
+                if self.serial_port.read().decode() == '<':
                     cmdStarted = True
                 waitingCount -= 1
                 bytesRead += 1
 
 
             while cmdStarted:
-                incomingChar = self.serialConn.read().decode()
+                incomingChar = self.serial_port.read().decode()
                 if incomingChar == '>':
                     message = ''.join(self._cmdCharList)
                     self._cmdCharList = []
