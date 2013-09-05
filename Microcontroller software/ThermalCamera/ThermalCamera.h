@@ -14,9 +14,5 @@
 	#include "USB.h"
 	#include <LUFA/Drivers/Peripheral/TWI.h>
 
-
-	// Function Prototypes: 
-	void SetupHardware(void);
-
 #endif
 

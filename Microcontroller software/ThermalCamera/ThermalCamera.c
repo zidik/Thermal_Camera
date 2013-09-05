@@ -29,6 +29,10 @@ static inline void scanStep();
 static inline void scanInit();
 static inline void scanMoveServos();
 
+static inline void hardware_setup();
+static inline void servo_setup();
+static inline void TWI_setup();
+
 
 uint8_t USB_RX_data[USB_RX_CMD_LENGTH];	// array of received bytes
 uint8_t USB_RX_data_count = 0;	// number of received bytes
@@ -56,7 +60,7 @@ uint8_t scanResolution = 64;	// scanning resolution
 
 int main(void)
 {
-	SetupHardware();
+	hardware_setup();
 
 	// Create a regular character stream for the interface so that it can be used with the stdio.h functions
 	CDC_Device_CreateStream(&VirtualSerial_CDC_Interface, &USBSerialStream);
@@ -425,7 +429,6 @@ static inline bool readMLX(uint8_t address, uint16_t *temperature, uint8_t *pec)
 			}
 		}
 	}
-	TWI_
 	// Must stop transmission afterwards to release the bus
 	TWI_StopTransmission();
 	return success;
@@ -468,7 +471,7 @@ static inline void setServoValue(uint8_t servoNr, uint16_t servoValue){
 
 
 
-void SetupHardware(void)
+static inline void hardware_setup()
 {
 	// Remove CLKDIV8
 	CLKPR = 0x80;
@@ -488,7 +491,7 @@ void SetupHardware(void)
 	USB_Init();
 }
 
-void servo_setup()
+static inline void servo_setup()
 {
 	// Setup servo timer
 	TCCR1A|=(1<<COM1A1)|(1<<COM1B1)|(1<<WGM11);			//NON Inverted PWM
@@ -498,7 +501,7 @@ void servo_setup()
 	SETBIT(DDRB,PB6);
 }
 
-void TWI_setup()
+static inline void TWI_setup()
 {
 	// Initialize the TWI driver before first use at 100KHz
 	TWI_Init(TWI_BIT_PRESCALE_1, TWI_BITLENGTH_FROM_FREQ(1, 100000));
